@@ -1,4 +1,4 @@
-import jwt from JsonWebTokenError;
+import jwt from "jsonwebtoken";
 
 export const signAccessToken= (payload)=>{
   return jwt.sign(payload,process.env.ACCESS_TOKEN_SECRET,{
