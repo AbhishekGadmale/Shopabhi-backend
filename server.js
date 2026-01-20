@@ -6,6 +6,7 @@ import cookieParser from "cookie-parser";
 
 import authRoutes from "./routes/auth.js";
 import orderRoutes from "./routes/orders.js";
+import testRoutes from "./routes/test.js";
 
 dotenv.config();
 
@@ -14,9 +15,10 @@ const PORT = process.env.PORT || 5000;
 
 app.use(express.json());
 app.use(cors({
-  origin:"https://abhishek-portfolio-2.onrender.com/",
+  origin:"https://abhishek-portfolio-2.onrender.com",
   credentials:true,
 }));
+app.use("/api", testRoutes);
 
 // MongoDB connect
 mongoose
@@ -35,13 +37,8 @@ app.get("/", (req, res) => {
   res.send("Backend is Running");
 });
 
-app.get("/api/test",(req,res)=>{
-  res.json({
-    status:"success",
-    message:"API is working"
-  });
-})
 
-app.listen(PORT, () => console.log(`Server started on port ${PORT}`));
+
+app.listen(PORT,"0.0.0.0", () => console.log(`Server started on port ${PORT}`));
 console.log("authRoutes is a", typeof authRoutes); // should be 'function'
 console.log("orderRoutes is a", typeof orderRoutes); // should be 'function'
