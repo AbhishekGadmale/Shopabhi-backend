@@ -15,7 +15,7 @@ const PORT = process.env.PORT || 5000;
 
 app.use(express.json());
 app.use(cors({
-  origin: ["https://abhishek-portfolio-2.onrender.com", "http://localhost:3000"],
+  origin: ["https://shopabhi.onrender.com", "http://localhost:3000"],
   credentials:true,
 }));
 app.use("/api", testRoutes);
