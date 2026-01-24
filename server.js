@@ -22,10 +22,7 @@ app.use("/api", testRoutes);
 app.use(cookieParser());
 // MongoDB connect
 mongoose
-  .connect(process.env.MONGO_URI, {
-    useNewUrlParser:true,
-    useNewTopology:true
-  })
+  .connect(process.env.MONGO_URI)
   .then(() => console.log("MongoDB connected"))
   .catch((err) => console.error("MongoDB error:", err));
 
