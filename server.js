@@ -19,7 +19,7 @@ app.use(cors({
   credentials:true,
 }));
 app.use("/api", testRoutes);
-
+app.use(cookieParser());
 // MongoDB connect
 mongoose
   .connect(process.env.MONGO_URI, {
