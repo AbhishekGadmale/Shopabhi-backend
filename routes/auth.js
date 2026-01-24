@@ -4,7 +4,7 @@ import User from "../models/User.js";
 import {
   signAccessToken,
   signRefreshToken,
-  verifyRefreshToken,
+  verifyExpireToken
 } from "../utils/tokens.js";
 
 const router = express.Router();
@@ -68,7 +68,7 @@ router.post("/refresh", async (req, res) => {
     const { refreshToken } = req.cookies;
     if (!refreshToken) return res.status(401).json({ error: "No refresh token" });
 
-    const decoded = verifyRefreshToken(refreshToken);
+    const decoded = verifyExpireToken(refreshToken);
     const accessToken = signAccessToken({ id: decoded.id, email: decoded.email });
 
     res.json({ accessToken });
