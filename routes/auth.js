@@ -47,8 +47,8 @@ router.post("/login", async (req, res) => {
     // Set refresh token in httpOnly secure cookie
     res.cookie("refreshToken", refreshToken, {
       httpOnly: true,
-      secure: false,        // set true if using HTTPS
-      sameSite: "lax",
+      secure: true,        // set true if using HTTPS
+      sameSite: "none",
       maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days in ms
     });
 
@@ -82,8 +82,9 @@ router.post("/refresh", async (req, res) => {
 router.post("/logout", (req, res) => {
   res.clearCookie("refreshToken", {
     httpOnly: true,
-    secure: false,
-    sameSite: "lax",
+    secure: true,
+    sameSite: "none",
+    maxAge: 30*24*60*60*1000,
   });
   res.json({ message: "Logged out" });
 });
