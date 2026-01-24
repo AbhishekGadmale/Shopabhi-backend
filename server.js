@@ -39,6 +39,6 @@ app.get("/", (req, res) => {
 
 
 
-app.listen(PORT,"0.0.0.0", () => console.log(`Server started on port ${PORT}`));
+app.listen(PORT, () => console.log(`Server started on port ${PORT}`));
 console.log("authRoutes is a", typeof authRoutes); // should be 'function'
 console.log("orderRoutes is a", typeof orderRoutes); // should be 'function'
