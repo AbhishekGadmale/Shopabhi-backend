@@ -18,8 +18,9 @@ app.use(cors({
   origin: ["https://shopabhi.onrender.com", "http://localhost:3000"],
   credentials:true,
 }));
-app.use("/api", testRoutes);
 app.use(cookieParser());
+app.use("/api", testRoutes);
+
 // MongoDB connect
 mongoose
   .connect(process.env.MONGO_URI)
