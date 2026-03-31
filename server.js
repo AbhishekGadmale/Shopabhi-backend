@@ -14,29 +14,61 @@ const app = express();
 const PORT = process.env.PORT || 5000;
 
 app.use(express.json());
-app.use(cors({
-  origin: ["https://shopabhi.onrender.com", "http://localhost:3000"],
-  credentials:true,
-}));
+const allowedOrigins = new Set([
+  "https://shopabhi.onrender.com",
+  "http://localhost:3000",
+]);
+
+app.use(
+  cors({
+    origin: (origin, callback) => {
+      // Allow same-origin / server-to-server / curl (no Origin header)
+      if (!origin) return callback(null, true);
+
+      // Allow known deployed frontend(s)
+      if (allowedOrigins.has(origin)) return callback(null, true);
+
+      // Allow any localhost port for dev (CRA, Vite, etc.)
+      try {
+        const { hostname } = new URL(origin);
+        if (hostname === "localhost" || hostname === "127.0.0.1") {
+          return callback(null, true);
+        }
+      } catch {
+        // fall through
+      }
+
+      return callback(new Error(`CORS blocked origin: ${origin}`));
+    },
+    credentials: true,
+  })
+);
 app.use(cookieParser());
 app.use("/api", testRoutes);
 
-// MongoDB connect
-mongoose
-  .connect(process.env.MONGO_URI)
-  .then(() => console.log("MongoDB connected"))
-  .catch((err) => console.error("MongoDB error:", err));
+async function startServer() {
+  if (!process.env.MONGO_URI) {
+    console.error("Missing MONGO_URI. Server cannot start.");
+    process.exit(1);
+  }
 
-// Routes
-app.use("/api/auth", authRoutes);
-app.use("/api/orders", orderRoutes);
+  try {
+    await mongoose.connect(process.env.MONGO_URI);
+    console.log("MongoDB connected");
+  } catch (err) {
+    console.error("MongoDB error:", err);
+    process.exit(1);
+  }
 
-app.get("/", (req, res) => {
-  res.send("Backend is Running");
-});
+  // Routes
+  app.use("/api/auth", authRoutes);
+  app.use("/api/orders", orderRoutes);
 
+  app.get("/", (req, res) => {
+    res.send("Backend is Running");
+  });
 
+  app.listen(PORT, () => console.log(`Server started on port ${PORT}`));
+}
 
-app.listen(PORT, () => console.log(`Server started on port ${PORT}`));
-console.log("authRoutes is a", typeof authRoutes); // should be 'function'
-console.log("orderRoutes is a", typeof orderRoutes); // should be 'function'
+startServer();

@@ -21,12 +21,22 @@ router.post("/signup", async (req, res) => {
     if (existing) return res.status(409).json({ error: "Email already registered" });
 
     const hash = await bcrypt.hash(password, 10);
-    const user = await User.create({ name, email, password: hash });
+    await User.create({ name, email, password: hash });
 
     res.status(201).json({ message: "User created successfully" });
   } catch (err) {
-    console.error("Signup error:", err.message);
-    res.status(500).json({ error: "Signup failed" });
+    console.error("Signup error:", err);
+    const isProd = process.env.NODE_ENV === "production";
+    res.status(500).json({
+      error: "Signup failed",
+      ...(isProd
+        ? {}
+        : {
+            details: err?.message || String(err),
+            code: err?.code,
+            name: err?.name,
+          }),
+    });
   }
 });
 
