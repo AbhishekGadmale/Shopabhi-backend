@@ -7,15 +7,32 @@ const itemSchema = new mongoose.Schema({
 });
 
 const orderSchema= new mongoose.Schema({
-    userId:{type:mongoose.Schema.Types.ObjectId,ref:"user",required:true},
+    userId:{type:mongoose.Schema.Types.ObjectId,ref:"User",required:true},
     items:{type:[itemSchema],required:true},
     total:{type:Number,required:true},
     details:{
         name:{type:String,required:true},
         address:{type:String,required:true},
     },
-},
-{timestamps:true}
-);
+    paymentStatus: {
+        type: String,
+        enum: ["Pending", "Paid", "Failed"],
+        default: "Pending"
+    },
+    status: {
+        type: String,
+        enum: ["Processing", "Shipped", "Delivered", "Cancelled"],
+        default: "Processing"
+    },
+    razorpayOrderId: { type: String },
+    razorpayPaymentId: { type: String },
+    razorpaySignature: { type: String },
+    },
+    {timestamps:true}
+    );
 
-export default mongoose.model("order",orderSchema);
+    // Add Indexes for performance
+    orderSchema.index({ userId: 1 });
+    orderSchema.index({ createdAt: -1 });
+
+    export default mongoose.model("order",orderSchema);

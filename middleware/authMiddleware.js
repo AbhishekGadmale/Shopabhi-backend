@@ -1,19 +1,25 @@
 import jwt from "jsonwebtoken";
+import AppError from "../utils/appError.js";
+import { config } from "../config/config.js";
 
 export const authMiddleware = (req, res, next) => {
-  const authHeader = req.headers.authorization; // correct header
+  let token;
 
-  if (!authHeader || !authHeader.startsWith("Bearer ")) {
-    return res.status(401).json({ message: "Authorization header missing or invalid" });
+  if (req.headers.authorization && req.headers.authorization.startsWith("Bearer ")) {
+    token = req.headers.authorization.split(" ")[1];
+  } else if (req.cookies.accessToken) {
+    token = req.cookies.accessToken;
   }
 
-  const token = authHeader.split(" ")[1];
+  if (!token) {
+    return next(new AppError("Not authorized to access this resource", 401));
+  }
 
   try {
-    const decoded = jwt.verify(token, process.env.ACCESS_TOKEN_SECRET);
-    req.user = decoded; // { id, iat, exp }
+    const decoded = jwt.verify(token, config.JWT_SECRET);
+    req.user = decoded;
     next();
   } catch (err) {
-    return res.status(401).json({ error: "Invalid or expired token" });
+    return next(new AppError("Invalid or expired token", 401));
   }
 };

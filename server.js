@@ -1,74 +1,135 @@
 import express from "express";
 import mongoose from "mongoose";
 import cors from "cors";
-import dotenv from "dotenv";
+import { config } from "./config/config.js";
+
 import cookieParser from "cookie-parser";
+import helmet from "helmet";
+import { rateLimit } from "express-rate-limit";
 
 import authRoutes from "./routes/auth.js";
 import orderRoutes from "./routes/orders.js";
+import productRoutes from "./routes/products.js";
+import adminRoutes from "./routes/admin.js";
 import testRoutes from "./routes/test.js";
 
-dotenv.config();
+import globalErrorHandler from "./middleware/errorMiddleware.js";
+import AppError from "./utils/appError.js";
 
 const app = express();
 const PORT = process.env.PORT || 5000;
 
+// Security Middleware
+app.use(helmet());
+
+// Rate Limiting
+const generalLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 100,
+  standardHeaders: "draft-7",
+  legacyHeaders: false,
+  message: { error: "Too many requests, please try again later." },
+});
+
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 20,
+  message: { error: "Too many login attempts, please try again after 15 minutes." },
+});
+
+app.use(generalLimiter);
+app.use("/api/auth", authLimiter);
+
 app.use(express.json());
-const allowedOrigins = new Set([
-  "https://shopabhi.onrender.com",
-  "http://localhost:3000",
-]);
+app.use(cookieParser());
+
+const allowedOrigins = new Set(
+  process.env.ALLOWED_ORIGINS 
+    ? process.env.ALLOWED_ORIGINS.split(",") 
+    : ["http://localhost:3000"]
+);
 
 app.use(
   cors({
     origin: (origin, callback) => {
-      // Allow same-origin / server-to-server / curl (no Origin header)
+      // Allow requests with no origin (like mobile apps or curl requests)
       if (!origin) return callback(null, true);
+      
+      if (allowedOrigins.has(origin)) {
+        return callback(null, true);
+      }
 
-      // Allow known deployed frontend(s)
-      if (allowedOrigins.has(origin)) return callback(null, true);
-
-      // Allow any localhost port for dev (CRA, Vite, etc.)
+      // Allow localhost/127.0.0.1 for development
       try {
         const { hostname } = new URL(origin);
         if (hostname === "localhost" || hostname === "127.0.0.1") {
           return callback(null, true);
         }
-      } catch {
-        // fall through
-      }
+      } catch (err) {}
 
       return callback(new Error(`CORS blocked origin: ${origin}`));
     },
     credentials: true,
   })
 );
-app.use(cookieParser());
+
+// Routes
+app.use("/api/auth", authRoutes);
+app.use("/api/orders", orderRoutes);
+app.use("/api/products", productRoutes);
+app.use("/api/admin", adminRoutes);
 app.use("/api", testRoutes);
 
+app.get("/", (req, res) => {
+  res.send("Backend is Running");
+});
+
+// Handle undefined routes
+app.use((req, res, next) => {
+  next(new AppError(`Can't find ${req.originalUrl} on this server!`, 404));
+});
+
+// Global Error Handler
+app.use(globalErrorHandler);
+
+// Database Connection with Retry Logic
+const connectWithRetry = async () => {
+  const MAX_RETRIES = 5;
+  const RETRY_INTERVAL = 5000;
+  let retries = 0;
+
+  while (retries < MAX_RETRIES) {
+    try {
+      await mongoose.connect(config.MONGO_URI);
+      console.log("✅ MongoDB connected successfully");
+      return;
+    } catch (err) {
+      retries++;
+      console.error(`❌ MongoDB connection attempt ${retries} failed:`, err.message);
+
+      if (retries >= MAX_RETRIES) {
+        console.error("💥 Max database connection retries reached. Exiting...");
+        process.exit(1);
+      }
+
+      console.log(`🔄 Retrying in ${RETRY_INTERVAL / 1000}s...`);
+      await new Promise((resolve) => setTimeout(resolve, RETRY_INTERVAL));
+    }
+  }
+};
+
+// Monitor connection events
+mongoose.connection.on("error", (err) => {
+  console.error("MongoDB error event:", err);
+});
+
+mongoose.connection.on("disconnected", () => {
+  console.warn("MongoDB disconnected event. Mongoose will attempt to reconnect automatically.");
+});
+
 async function startServer() {
-  if (!process.env.MONGO_URI) {
-    console.error("Missing MONGO_URI. Server cannot start.");
-    process.exit(1);
-  }
-
-  try {
-    await mongoose.connect(process.env.MONGO_URI);
-    console.log("MongoDB connected");
-  } catch (err) {
-    console.error("MongoDB error:", err);
-    process.exit(1);
-  }
-
-  // Routes
-  app.use("/api/auth", authRoutes);
-  app.use("/api/orders", orderRoutes);
-
-  app.get("/", (req, res) => {
-    res.send("Backend is Running");
-  });
-
-  app.listen(PORT, () => console.log(`Server started on port ${PORT}`));
+  await connectWithRetry();
+  app.listen(PORT, () => console.log(`🚀 Server started on port ${PORT} in ${process.env.NODE_ENV} mode`));
 }
 
 startServer();
