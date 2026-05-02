@@ -8,6 +8,12 @@ const userSchema=new mongoose.Schema({
         enum: ["user", "admin"],
         default: "user"
     },
+    cart: [
+        {
+            productId: { type: mongoose.Schema.Types.ObjectId, ref: "Product" },
+            quantity: { type: Number, default: 1 }
+        }
+    ],
     passwordResetToken: String,
     passwordResetExpires: Date
 });

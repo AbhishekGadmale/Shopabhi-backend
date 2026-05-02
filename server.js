@@ -9,15 +9,21 @@ import { rateLimit } from "express-rate-limit";
 
 import authRoutes from "./routes/auth.js";
 import orderRoutes from "./routes/orders.js";
+import cartRoutes from "./routes/cart.js";
 import productRoutes from "./routes/products.js";
 import adminRoutes from "./routes/admin.js";
 import testRoutes from "./routes/test.js";
 
 import globalErrorHandler from "./middleware/errorMiddleware.js";
 import AppError from "./utils/appError.js";
+import { startOrderExpiryJob } from "./jobs/orderExpiryJob.js";
+import { correlationIdMiddleware } from "./middleware/correlationIdMiddleware.js";
 
 const app = express();
 const PORT = process.env.PORT || 5000;
+
+// Traceability
+app.use(correlationIdMiddleware);
 
 // Security Middleware
 app.use(helmet());
@@ -39,6 +45,10 @@ const authLimiter = rateLimit({
 
 app.use(generalLimiter);
 app.use("/api/auth", authLimiter);
+
+// Webhook needs raw body for signature verification
+import { handleWebhook } from "./controllers/orderController.js";
+app.post("/api/orders/webhook", express.raw({ type: 'application/json' }), handleWebhook);
 
 app.use(express.json());
 app.use(cookieParser());
@@ -76,6 +86,7 @@ app.use(
 // Routes
 app.use("/api/auth", authRoutes);
 app.use("/api/orders", orderRoutes);
+app.use("/api/cart", cartRoutes);
 app.use("/api/products", productRoutes);
 app.use("/api/admin", adminRoutes);
 app.use("/api", testRoutes);
@@ -129,6 +140,7 @@ mongoose.connection.on("disconnected", () => {
 
 async function startServer() {
   await connectWithRetry();
+  startOrderExpiryJob(); // Start the background job
   app.listen(PORT, () => console.log(`🚀 Server started on port ${PORT} in ${process.env.NODE_ENV} mode`));
 }
 

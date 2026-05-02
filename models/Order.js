@@ -1,6 +1,7 @@
 import mongoose from "mongoose";
 
 const itemSchema = new mongoose.Schema({
+    productId: {type: mongoose.Schema.Types.ObjectId, ref: "Product", required: true},
     name: {type:String, required:true},
     price:{type:Number, required:true},
     quantity:{type:Number,required:true}
@@ -27,6 +28,8 @@ const orderSchema= new mongoose.Schema({
     razorpayOrderId: { type: String },
     razorpayPaymentId: { type: String },
     razorpaySignature: { type: String },
+    idempotencyKey: { type: String },
+    expiresAt: { type: Date },
     },
     {timestamps:true}
     );
@@ -34,5 +37,7 @@ const orderSchema= new mongoose.Schema({
     // Add Indexes for performance
     orderSchema.index({ userId: 1 });
     orderSchema.index({ createdAt: -1 });
+    orderSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 }); // Optional TTL, but we handle via cron for stock rollback
+    orderSchema.index({ userId: 1, idempotencyKey: 1 }, { unique: true });
 
     export default mongoose.model("order",orderSchema);

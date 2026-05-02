@@ -1,6 +1,9 @@
 import crypto from "crypto";
 import Razorpay from "razorpay";
+import mongoose from "mongoose";
 import Order from "../models/Order.js";
+import Product from "../models/Product.js";
+import User from "../models/User.js";
 import { orderSchema } from "../utils/validation.js";
 import AppError from "../utils/appError.js";
 import catchAsync from "../utils/catchAsync.js";
@@ -10,6 +13,57 @@ const razorpay = new Razorpay({
   key_id: config.RAZORPAY_KEY_ID,
   key_secret: config.RAZORPAY_KEY_SECRET,
 });
+
+// Structured Logger
+const logEvent = (req, event, details) => {
+  console.log(JSON.stringify({ 
+    timestamp: new Date().toISOString(), 
+    correlationId: req?.correlationId || "system",
+    event, 
+    details 
+  }));
+};
+
+const validateCartItems = async (items) => {
+  let total = 0;
+  const validatedItems = [];
+
+  for (const item of items) {
+    const product = await Product.findById(item.id || item._id);
+    if (!product) {
+      throw new AppError(`Product not found: ${item.name || item.id}`, 404);
+    }
+    
+    if (product.stock < item.quantity) {
+      throw new AppError(`Insufficient stock for ${product.name}`, 400);
+    }
+
+    total += product.price * item.quantity;
+    validatedItems.push({
+      productId: product._id,
+      name: product.name,
+      price: product.price,
+      quantity: item.quantity,
+      image: product.image,
+    });
+  }
+
+  return { total, validatedItems };
+};
+
+// Stock Deduction with Transaction support
+const deductStockWithSession = async (items, session) => {
+  for (const item of items) {
+    const result = await Product.findOneAndUpdate(
+      { _id: item.productId, stock: { $gte: item.quantity } },
+      { $inc: { stock: -item.quantity } },
+      { new: true, session }
+    );
+    if (!result) {
+      throw new Error(`Insufficient stock for ${item.name} during transaction`);
+    }
+  }
+};
 
 export const getOrders = catchAsync(async (req, res, next) => {
   const page = req.query.page * 1 || 1;
@@ -33,49 +87,157 @@ export const getOrders = catchAsync(async (req, res, next) => {
   });
 });
 
-export const createOrder = catchAsync(async (req, res, next) => {
-  const validation = orderSchema.safeParse(req.body);
-  if (!validation.success) {
-    return next(new AppError("Validation failed", 400));
+export const previewOrder = catchAsync(async (req, res, next) => {
+  const { items } = req.body;
+  if (!items || !Array.isArray(items) || items.length === 0) {
+    return next(new AppError("Items are required", 400));
   }
 
-  const { items, total, details } = validation.data;
+  const { total, validatedItems } = await validateCartItems(items);
 
-  const order = new Order({
-    userId: req.user.id,
-    items,
-    total,
-    details,
-    paymentStatus: details.paymentMethod === "cod" ? "Pending" : "Pending",
-  });
-
-  await order.save();
-
-  res.status(201).json({
+  res.status(200).json({
     status: "success",
-    message: "Order Placed Successfully",
-    order,
+    total,
+    items: validatedItems,
   });
 });
 
-export const createRazorpayOrder = catchAsync(async (req, res, next) => {
-  const { amount, currency = "INR" } = req.body;
+export const createOrder = catchAsync(async (req, res, next) => {
+  const { items, details, idempotencyKey } = req.body;
 
-  if (!amount) {
-    return next(new AppError("Amount is required", 400));
+  if (!items || !details || !idempotencyKey) {
+    return next(new AppError("Items, details, and idempotencyKey are required", 400));
+  }
+
+  const existingOrder = await Order.findOne({ userId: req.user.id, idempotencyKey });
+  if (existingOrder) {
+    logEvent(req, "order_idempotency_hit", { userId: req.user.id, idempotencyKey });
+    return res.status(200).json({
+      status: "success",
+      message: "Order already placed",
+      order: existingOrder,
+    });
+  }
+
+  const { total, validatedItems } = await validateCartItems(items);
+
+  const session = await mongoose.startSession();
+  session.startTransaction();
+
+  try {
+    await deductStockWithSession(validatedItems, session);
+
+    const expiresAt = new Date(Date.now() + 15 * 60 * 1000); // 15 mins expiry for COD/Pending
+
+    const order = new Order({
+      userId: req.user.id,
+      items: validatedItems.map(item => ({
+        productId: item.productId,
+        name: item.name,
+        price: item.price,
+        quantity: item.quantity
+      })),
+      total,
+      details,
+      paymentStatus: details.paymentMethod === "cod" ? "Pending" : "Pending",
+      idempotencyKey,
+      expiresAt
+    });
+
+    await order.save({ session });
+
+    // Non-critical cart update moved outside or kept in session for safety? 
+    // Kept in session for absolute data consistency.
+    const purchasedIds = validatedItems.map(item => item.productId.toString());
+    await User.findByIdAndUpdate(
+      req.user.id,
+      { $pull: { cart: { productId: { $in: purchasedIds } } } },
+      { session }
+    );
+
+    await session.commitTransaction();
+    session.endSession();
+
+    logEvent(req, "order_created", { orderId: order._id, userId: req.user.id, total, method: details.paymentMethod });
+
+    res.status(201).json({
+      status: "success",
+      message: "Order Placed Successfully",
+      order,
+    });
+  } catch (err) {
+    await session.abortTransaction();
+    session.endSession();
+    logEvent(req, "order_creation_failed", { userId: req.user.id, reason: err.message });
+    throw new AppError(err.message, 400);
+  }
+});
+
+export const createRazorpayOrder = catchAsync(async (req, res, next) => {
+  const { items, details, idempotencyKey } = req.body;
+
+  if (!items || !details || !idempotencyKey) {
+    return next(new AppError("Items, details, and idempotencyKey are required", 400));
+  }
+
+  let order = await Order.findOne({ userId: req.user.id, idempotencyKey });
+  if (order && order.paymentStatus === "Paid") {
+    return next(new AppError("Order already paid", 400));
+  }
+
+  const { total, validatedItems } = await validateCartItems(items);
+
+  if (!order) {
+    const session = await mongoose.startSession();
+    session.startTransaction();
+    try {
+      await deductStockWithSession(validatedItems, session);
+      
+      const expiresAt = new Date(Date.now() + 15 * 60 * 1000); // 15 mins expiry for payment
+
+      order = new Order({
+        userId: req.user.id,
+        items: validatedItems.map(item => ({
+          productId: item.productId,
+          name: item.name,
+          price: item.price,
+          quantity: item.quantity
+        })),
+        total,
+        details,
+        paymentStatus: "Pending",
+        idempotencyKey,
+        expiresAt
+      });
+      await order.save({ session });
+      
+      await session.commitTransaction();
+      session.endSession();
+      
+      logEvent(req, "razorpay_order_pending_created", { orderId: order._id, userId: req.user.id, total });
+    } catch (err) {
+      await session.abortTransaction();
+      session.endSession();
+      logEvent(req, "razorpay_order_creation_failed", { userId: req.user.id, reason: err.message });
+      throw new AppError(err.message, 400);
+    }
   }
 
   const options = {
-    amount: Math.round(amount * 100), // amount in the smallest currency unit
-    currency,
-    receipt: `receipt_${Date.now()}`,
+    amount: Math.round(total * 100),
+    currency: "INR",
+    receipt: order._id.toString(),
   };
 
   const razorpayOrder = await razorpay.orders.create(options);
 
+  order.razorpayOrderId = razorpayOrder.id;
+  await order.save();
+
   res.status(200).json({
     status: "success",
     order: razorpayOrder,
+    localOrderId: order._id
   });
 });
 
@@ -84,7 +246,7 @@ export const verifyPayment = catchAsync(async (req, res, next) => {
     razorpay_order_id,
     razorpay_payment_id,
     razorpay_signature,
-    orderData,
+    localOrderId
   } = req.body;
 
   const sign = razorpay_order_id + "|" + razorpay_payment_id;
@@ -94,33 +256,139 @@ export const verifyPayment = catchAsync(async (req, res, next) => {
     .digest("hex");
 
   if (razorpay_signature !== expectedSign) {
+    logEvent(req, "payment_verification_failed", { localOrderId, reason: "Invalid signature" });
     return next(new AppError("Invalid payment signature", 400));
   }
 
-  // Create order in database after successful payment
-  const validation = orderSchema.safeParse(orderData);
-  if (!validation.success) {
-    return next(new AppError("Validation failed", 400));
+  // ATOMIC TRANSITION
+  const session = await mongoose.startSession();
+  session.startTransaction();
+
+  try {
+    // Re-verify amount from Razorpay API
+    const rzpOrder = await razorpay.orders.fetch(razorpay_order_id);
+
+    const order = await Order.findOneAndUpdate(
+      { _id: localOrderId, paymentStatus: "Pending" },
+      { 
+        $set: { 
+          paymentStatus: "Paid",
+          status: "Processing",
+          razorpayPaymentId: razorpay_payment_id,
+          razorpaySignature: razorpay_signature
+        },
+        $unset: { expiresAt: "" }
+      },
+      { session, new: true }
+    );
+
+    if (!order) {
+      // Check if already paid (maybe by webhook)
+      const existing = await Order.findById(localOrderId);
+      if (existing && existing.paymentStatus === "Paid") {
+        await session.abortTransaction();
+        session.endSession();
+        return res.status(200).json({ status: "success", message: "Already paid", order: existing });
+      }
+      throw new Error("Order transition failed - order might be expired or already processed");
+    }
+
+    if (rzpOrder.amount !== Math.round(order.total * 100)) {
+      throw new Error("Amount mismatch detected during verification");
+    }
+
+    // Cart cleanup
+    const purchasedIds = order.items.map(item => item.productId.toString());
+    await User.findByIdAndUpdate(
+      order.userId,
+      { $pull: { cart: { productId: { $in: purchasedIds } } } },
+      { session }
+    );
+
+    await session.commitTransaction();
+    session.endSession();
+
+    logEvent(req, "payment_verified_successfully", { orderId: order._id, razorpayPaymentId: razorpay_payment_id });
+
+    res.status(200).json({
+      status: "success",
+      message: "Payment verified and order finalized",
+      order,
+    });
+  } catch (err) {
+    await session.abortTransaction();
+    session.endSession();
+    logEvent(req, "payment_verification_error", { localOrderId, reason: err.message });
+    return next(new AppError(err.message, 400));
+  }
+});
+
+export const handleWebhook = catchAsync(async (req, res, next) => {
+  const secret = config.RAZORPAY_WEBHOOK_SECRET || "YOUR_WEBHOOK_SECRET";
+  const signature = req.headers["x-razorpay-signature"];
+
+  // Webhook validation
+  const shasum = crypto.createHmac("sha256", secret);
+  shasum.update(JSON.stringify(req.body));
+  const digest = shasum.digest("hex");
+
+  if (digest !== signature) {
+    logEvent(null, "webhook_signature_mismatch", { expected: digest, received: signature });
+    return res.status(400).send("Invalid signature");
   }
 
-  const { items, total, details } = validation.data;
+  const event = req.body.event;
+  if (event === "payment.captured") {
+    const payment = req.body.payload.payment.entity;
+    const razorpayOrderId = payment.order_id;
+    const razorpayPaymentId = payment.id;
 
-  const order = new Order({
-    userId: req.user.id,
-    items,
-    total,
-    details,
-    paymentStatus: "Paid",
-    razorpayOrderId: razorpay_order_id,
-    razorpayPaymentId: razorpay_payment_id,
-    razorpaySignature: razorpay_signature,
-  });
+    logEvent(null, "webhook_payment_captured", { razorpayOrderId, razorpayPaymentId });
 
-  await order.save();
+    const session = await mongoose.startSession();
+    session.startTransaction();
 
-  res.status(200).json({
-    status: "success",
-    message: "Payment verified and order placed successfully",
-    order,
-  });
+    try {
+      // ATOMIC TRANSITION from Pending to Paid
+      const order = await Order.findOneAndUpdate(
+        { razorpayOrderId, paymentStatus: "Pending" },
+        { 
+          $set: { 
+            paymentStatus: "Paid",
+            status: "Processing",
+            razorpayPaymentId: razorpayPaymentId
+          },
+          $unset: { expiresAt: "" }
+        },
+        { session, new: true }
+      );
+
+      if (order) {
+        if (payment.amount !== Math.round(order.total * 100)) {
+           throw new Error("Amount mismatch in webhook");
+        }
+
+        const purchasedIds = order.items.map(item => item.productId.toString());
+        await User.findByIdAndUpdate(
+          order.userId,
+          { $pull: { cart: { productId: { $in: purchasedIds } } } },
+          { session }
+        );
+
+        logEvent(null, "webhook_order_finalized", { orderId: order._id });
+      } else {
+        logEvent(null, "webhook_order_already_processed_or_not_found", { razorpayOrderId });
+      }
+
+      await session.commitTransaction();
+      session.endSession();
+    } catch (err) {
+      await session.abortTransaction();
+      session.endSession();
+      logEvent(null, "webhook_processing_error", { razorpayOrderId, reason: err.message });
+      return res.status(500).send("Internal Server Error");
+    }
+  }
+
+  res.status(200).json({ status: "ok" });
 });
