@@ -11,6 +11,6 @@ router.post("/refresh", authController.refresh);
 router.post("/logout", authController.logout);
 router.post("/forgot-password", authController.forgotPassword);
 router.patch("/reset-password/:token", authController.resetPassword);
-router.get("/me", authMiddleware, authController.getProfile);
+router.get("/me", authController.getProfile);
 
 export default router;

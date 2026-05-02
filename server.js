@@ -53,11 +53,9 @@ app.post("/api/orders/webhook", express.raw({ type: 'application/json' }), handl
 app.use(express.json());
 app.use(cookieParser());
 
-const allowedOrigins = new Set(
-  process.env.ALLOWED_ORIGINS 
-    ? process.env.ALLOWED_ORIGINS.split(",") 
-    : ["https://shopabhi.onrender.com/"]
-);
+const allowedOrigins = process.env.ALLOWED_ORIGINS 
+  ? process.env.ALLOWED_ORIGINS.split(",").map(origin => origin.trim().replace(/\/$/, ""))
+  : ["https://shopabhi.onrender.com"];
 
 app.use(
   cors({
@@ -65,7 +63,9 @@ app.use(
       // Allow requests with no origin (like mobile apps or curl requests)
       if (!origin) return callback(null, true);
       
-      if (allowedOrigins.has(origin)) {
+      const normalizedOrigin = origin.replace(/\/$/, "");
+      
+      if (allowedOrigins.includes(normalizedOrigin)) {
         return callback(null, true);
       }
 
@@ -77,9 +77,12 @@ app.use(
         }
       } catch (err) {}
 
+      console.error(`CORS blocked origin: ${origin}`);
       return callback(new Error(`CORS blocked origin: ${origin}`));
     },
     credentials: true,
+    methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With"],
   })
 );
 

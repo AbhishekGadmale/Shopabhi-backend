@@ -122,14 +122,31 @@ export const logout = (req, res) => {
 };
 
 export const getProfile = catchAsync(async (req, res, next) => {
-  const user = await User.findById(req.user.id);
-  if (!user) {
-    return next(new AppError("User not found", 404));
+  let token;
+
+  if (req.headers.authorization && req.headers.authorization.startsWith("Bearer ")) {
+    token = req.headers.authorization.split(" ")[1];
+  } else if (req.cookies.accessToken) {
+    token = req.cookies.accessToken;
   }
-  res.json({
-    status: "success",
-    user: { id: user._id, name: user.name, email: user.email, role: user.role },
-  });
+
+  if (!token) {
+    return res.json({ status: "success", user: null });
+  }
+
+  try {
+    const decoded = verifyExpireToken(token); // Use verifyExpireToken to be safe
+    const user = await User.findById(decoded.id);
+    if (!user) {
+      return res.json({ status: "success", user: null });
+    }
+    res.json({
+      status: "success",
+      user: { id: user._id, name: user.name, email: user.email, role: user.role },
+    });
+  } catch (err) {
+    res.json({ status: "success", user: null });
+  }
 });
 
 export const forgotPassword = catchAsync(async (req, res, next) => {
