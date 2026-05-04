@@ -1,4 +1,5 @@
 import Product from "../models/Product.js";
+import Review from "../models/Review.js";
 import AppError from "../utils/appError.js";
 import catchAsync from "../utils/catchAsync.js";
 
@@ -29,6 +30,10 @@ export const deleteProduct = catchAsync(async (req, res, next) => {
   if (!product) {
     return next(new AppError("Product not found", 404));
   }
+
+  // Delete all associated reviews
+  await Review.deleteMany({ product: req.params.id });
+
   res.status(204).json({
     status: "success",
     data: null,
