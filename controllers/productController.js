@@ -1,4 +1,5 @@
 import Product from "../models/Product.js";
+import Variant from "../models/Variant.js";
 import Review from "../models/Review.js";
 import Category from "../models/Category.js";
 import AppError from "../utils/appError.js";
@@ -48,6 +49,9 @@ export const getProduct = catchAsync(async (req, res, next) => {
     return next(new AppError("Product not found", 404));
   }
 
+  // Fetch variants
+  const variants = await Variant.find({ product: product._id });
+
   const ratingDistribution = await Review.aggregate([
     { $match: { product: product._id } },
     { $group: { _id: "$rating", count: { $sum: 1 } } }
@@ -60,7 +64,11 @@ export const getProduct = catchAsync(async (req, res, next) => {
 
   res.status(200).json({
     status: "success",
-    product: { ...product.toObject(), ratingDistribution: distribution },
+    product: { 
+      ...product.toObject(), 
+      variants,
+      ratingDistribution: distribution 
+    },
   });
 });
 

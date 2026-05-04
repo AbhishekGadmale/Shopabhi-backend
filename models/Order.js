@@ -10,6 +10,9 @@ const itemSchema = new mongoose.Schema({
 const orderSchema= new mongoose.Schema({
     userId:{type:mongoose.Schema.Types.ObjectId,ref:"User",required:true},
     items:{type:[itemSchema],required:true},
+    subtotal: { type: Number },
+    discount: { type: Number, default: 0 },
+    couponCode: { type: String },
     total:{type:Number,required:true},
     details:{
         name:{type:String,required:true},

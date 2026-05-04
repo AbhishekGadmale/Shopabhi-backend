@@ -14,6 +14,7 @@ import {
 } from "../utils/validation.js";
 import AppError from "../utils/appError.js";
 import catchAsync from "../utils/catchAsync.js";
+import sendEmail from "../utils/email.js";
 
 export const signup = catchAsync(async (req, res, next) => {
   const validation = signupSchema.safeParse(req.body);
@@ -174,18 +175,43 @@ export const forgotPassword = catchAsync(async (req, res, next) => {
 
   await user.save({ validateBeforeSave: false });
 
-  // 4) Send it via email (Demo: log to console)
-  const resetURL = `${req.protocol}://${req.get("host")}/api/auth/reset-password/${resetToken}`;
-  console.log("-----------------------------------------");
-  console.log("PASSWORD RESET REQUEST");
-  console.log("User:", user.email);
-  console.log("Reset URL:", resetURL);
-  console.log("-----------------------------------------");
+  // 4) Send it via email
+  const resetURL = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/reset-password/${resetToken}`;
+  const message = `Forgot your password? Submit a PATCH request with your new password and passwordConfirm to: ${resetURL}.\nIf you didn't forget your password, please ignore this email!`;
 
-  res.status(200).json({
-    status: "success",
-    message: "Token sent to email! (Check server console for demo)",
-  });
+  try {
+    if (process.env.EMAIL_HOST) {
+      await sendEmail({
+        email: user.email,
+        subject: "Your password reset token (valid for 10 min)",
+        message,
+      });
+
+      res.status(200).json({
+        status: "success",
+        message: "Token sent to email!",
+      });
+    } else {
+       // Fallback for demo/dev without email config
+       console.log("-----------------------------------------");
+       console.log("PASSWORD RESET REQUEST (CONSOLE FALLBACK)");
+       console.log("User:", user.email);
+       console.log("Reset URL:", resetURL);
+       console.log("-----------------------------------------");
+       res.status(200).json({
+         status: "success",
+         message: "Token generated! (Email not configured, check server console)",
+       });
+    }
+  } catch (err) {
+    user.passwordResetToken = undefined;
+    user.passwordResetExpires = undefined;
+    await user.save({ validateBeforeSave: false });
+
+    return next(
+      new AppError("There was an error sending the email. Try again later", 500)
+    );
+  }
 });
 
 export const resetPassword = catchAsync(async (req, res, next) => {

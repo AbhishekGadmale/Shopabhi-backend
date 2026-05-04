@@ -4,13 +4,15 @@ import { adminMiddleware } from "../middleware/adminMiddleware.js";
 import * as adminProductController from "../controllers/adminProductController.js";
 import * as adminOrderController from "../controllers/adminOrderController.js";
 import * as adminReviewController from "../controllers/adminReviewController.js";
+import * as adminCouponController from "../controllers/adminCouponController.js";
+import * as adminUserController from "../controllers/adminUserController.js";
 
 const router = express.Router();
 
-// Protect all admin routes
-router.use(authMiddleware, adminMiddleware);
+router.use(authMiddleware);
+router.use(adminMiddleware);
 
-// Dashboard
+// Stats
 router.get("/stats", adminOrderController.getDashboardStats);
 
 // Products
@@ -31,5 +33,16 @@ router.delete("/reviews/:id", adminReviewController.deleteReview);
 // Orders
 router.get("/orders", adminOrderController.getAllOrders);
 router.patch("/orders/:id/status", adminOrderController.updateOrderStatus);
+
+// Coupons
+router.get("/coupons", adminCouponController.getAllCoupons);
+router.post("/coupons", adminCouponController.createCoupon);
+router.patch("/coupons/:id", adminCouponController.updateCoupon);
+router.delete("/coupons/:id", adminCouponController.deleteCoupon);
+
+// Users
+router.get("/users", adminUserController.getAllUsers);
+router.patch("/users/:id/role", adminUserController.updateUserRole);
+router.delete("/users/:id", adminUserController.deleteUser);
 
 export default router;

@@ -8,7 +8,7 @@ router.use(authMiddleware);
 
 router.get("/", orderController.getOrders);
 router.post("/preview", orderController.previewOrder);
-router.post("/", orderController.createOrder);
+router.post("/validate-coupon", orderController.validateCoupon);
 router.post("/razorpay", orderController.createRazorpayOrder);
 router.post("/verify", orderController.verifyPayment);
 

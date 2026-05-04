@@ -4,10 +4,12 @@ import mongoose from "mongoose";
 import Order from "../models/Order.js";
 import Product from "../models/Product.js";
 import User from "../models/User.js";
+import Coupon from "../models/Coupon.js";
 import { orderSchema } from "../utils/validation.js";
 import AppError from "../utils/appError.js";
 import catchAsync from "../utils/catchAsync.js";
 import { config } from "../config/config.js";
+import sendEmail from "../utils/email.js";
 
 const razorpay = new Razorpay({
   key_id: config.RAZORPAY_KEY_ID,
@@ -87,23 +89,84 @@ export const getOrders = catchAsync(async (req, res, next) => {
   });
 });
 
+export const validateCoupon = catchAsync(async (req, res, next) => {
+  const { code, cartTotal } = req.body;
+  if (!code) return next(new AppError("Coupon code is required", 400));
+
+  const coupon = await Coupon.findOne({ 
+    code: code.toUpperCase(), 
+    isActive: true,
+    expiryDate: { $gt: new Date() }
+  });
+
+  if (!coupon) {
+    return next(new AppError("Invalid or expired coupon code", 400));
+  }
+
+  if (cartTotal < coupon.minPurchase) {
+    return next(new AppError(`Minimum purchase of ₹${coupon.minPurchase} required for this coupon`, 400));
+  }
+
+  if (coupon.usageLimit && coupon.usedCount >= coupon.usageLimit) {
+    return next(new AppError("Coupon usage limit reached", 400));
+  }
+
+  let discount = 0;
+  if (coupon.discountType === "percentage") {
+    discount = (cartTotal * coupon.discountValue) / 100;
+    if (coupon.maxDiscount && discount > coupon.maxDiscount) {
+      discount = coupon.maxDiscount;
+    }
+  } else {
+    discount = coupon.discountValue;
+  }
+
+  res.status(200).json({
+    status: "success",
+    discount,
+    code: coupon.code
+  });
+});
+
 export const previewOrder = catchAsync(async (req, res, next) => {
-  const { items } = req.body;
+  const { items, couponCode } = req.body;
   if (!items || !Array.isArray(items) || items.length === 0) {
     return next(new AppError("Items are required", 400));
   }
 
   const { total, validatedItems } = await validateCartItems(items);
+  let discount = 0;
+  let finalTotal = total;
+
+  if (couponCode) {
+    const coupon = await Coupon.findOne({ 
+      code: couponCode.toUpperCase(), 
+      isActive: true,
+      expiryDate: { $gt: new Date() }
+    });
+
+    if (coupon && total >= coupon.minPurchase) {
+      if (coupon.discountType === "percentage") {
+        discount = (total * coupon.discountValue) / 100;
+        if (coupon.maxDiscount && discount > coupon.maxDiscount) discount = coupon.maxDiscount;
+      } else {
+        discount = coupon.discountValue;
+      }
+      finalTotal = total - discount;
+    }
+  }
 
   res.status(200).json({
     status: "success",
-    total,
+    subtotal: total,
+    discount,
+    total: finalTotal,
     items: validatedItems,
   });
 });
 
 export const createOrder = catchAsync(async (req, res, next) => {
-  const { items, details, idempotencyKey } = req.body;
+  const { items, details, idempotencyKey, couponCode } = req.body;
 
   if (!items || !details || !idempotencyKey) {
     return next(new AppError("Items, details, and idempotencyKey are required", 400));
@@ -120,12 +183,37 @@ export const createOrder = catchAsync(async (req, res, next) => {
   }
 
   const { total, validatedItems } = await validateCartItems(items);
+  let discount = 0;
+  let finalTotal = total;
+  let appliedCoupon = null;
+
+  if (couponCode) {
+    appliedCoupon = await Coupon.findOne({ 
+      code: couponCode.toUpperCase(), 
+      isActive: true,
+      expiryDate: { $gt: new Date() }
+    });
+
+    if (appliedCoupon && total >= appliedCoupon.minPurchase) {
+      if (appliedCoupon.discountType === "percentage") {
+        discount = (total * appliedCoupon.discountValue) / 100;
+        if (appliedCoupon.maxDiscount && discount > appliedCoupon.maxDiscount) discount = appliedCoupon.maxDiscount;
+      } else {
+        discount = appliedCoupon.discountValue;
+      }
+      finalTotal = total - discount;
+    }
+  }
 
   const session = await mongoose.startSession();
   session.startTransaction();
 
   try {
     await deductStockWithSession(validatedItems, session);
+
+    if (appliedCoupon) {
+      await Coupon.findByIdAndUpdate(appliedCoupon._id, { $inc: { usedCount: 1 } }, { session });
+    }
 
     const expiresAt = new Date(Date.now() + 15 * 60 * 1000); // 15 mins expiry for COD/Pending
 
@@ -137,7 +225,9 @@ export const createOrder = catchAsync(async (req, res, next) => {
         price: item.price,
         quantity: item.quantity
       })),
-      total,
+      total: finalTotal,
+      discount,
+      couponCode: appliedCoupon?.code,
       details,
       paymentStatus: details.paymentMethod === "cod" ? "Pending" : "Pending",
       idempotencyKey,
@@ -146,8 +236,7 @@ export const createOrder = catchAsync(async (req, res, next) => {
 
     await order.save({ session });
 
-    // Non-critical cart update moved outside or kept in session for safety? 
-    // Kept in session for absolute data consistency.
+    // Non-critical cart update
     const purchasedIds = validatedItems.map(item => item.productId.toString());
     await User.findByIdAndUpdate(
       req.user.id,
@@ -158,7 +247,7 @@ export const createOrder = catchAsync(async (req, res, next) => {
     await session.commitTransaction();
     session.endSession();
 
-    logEvent(req, "order_created", { orderId: order._id, userId: req.user.id, total, method: details.paymentMethod });
+    logEvent(req, "order_created", { orderId: order._id, userId: req.user.id, total: finalTotal, method: details.paymentMethod });
 
     res.status(201).json({
       status: "success",
@@ -309,6 +398,20 @@ export const verifyPayment = catchAsync(async (req, res, next) => {
     session.endSession();
 
     logEvent(req, "payment_verified_successfully", { orderId: order._id, razorpayPaymentId: razorpay_payment_id });
+
+    // Send Confirmation Email (Async - don't wait for it)
+    try {
+      const user = await User.findById(order.userId);
+      if (user) {
+        sendEmail({
+          email: user.email,
+          subject: `Order Confirmed - ${order._id}`,
+          message: `Hi ${user.name},\n\nYour order #${order._id} for ₹${order.total} has been successfully placed and is now being processed.\n\nThank you for shopping with ShopAbhi!`
+        }).catch(err => console.error("Email sending failed:", err));
+      }
+    } catch (emailErr) {
+      console.error("Failed to trigger email notification:", emailErr);
+    }
 
     res.status(200).json({
       status: "success",
