@@ -1,6 +1,7 @@
 import mongoose from "mongoose";
 import dotenv from "dotenv";
 import Product from "./models/Product.js";
+import Category from "./models/Category.js";
 
 import path from "path";
 import { fileURLToPath } from "url";
@@ -85,22 +86,27 @@ const products = [
   }
 ];
 
-const seedProducts = async () => {
+const seedData = async () => {
   try {
     await mongoose.connect(process.env.MONGO_URI);
     console.log("Connected to MongoDB for seeding...");
     
     await Product.deleteMany();
     console.log("Existing products deleted.");
-    
     await Product.insertMany(products);
     console.log("Products seeded successfully.");
+
+    await Category.deleteMany();
+    const uniqueCategories = [...new Set(products.map(p => p.category))];
+    const categoryDocs = uniqueCategories.map(name => ({ name }));
+    await Category.insertMany(categoryDocs);
+    console.log("Categories seeded successfully.");
     
     process.exit();
   } catch (error) {
-    console.error("Error seeding products:", error);
+    console.error("Error seeding data:", error);
     process.exit(1);
   }
 };
 
-seedProducts();
+seedData();

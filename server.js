@@ -8,6 +8,7 @@ import helmet from "helmet";
 import { rateLimit } from "express-rate-limit";
 
 import authRoutes from "./routes/auth.js";
+import userRoutes from "./routes/users.js";
 import orderRoutes from "./routes/orders.js";
 import cartRoutes from "./routes/cart.js";
 import productRoutes from "./routes/products.js";
@@ -22,16 +23,41 @@ import { correlationIdMiddleware } from "./middleware/correlationIdMiddleware.js
 const app = express();
 const PORT = process.env.PORT || 5000;
 
+// 1. CORS - MUST BE FIRST to handle preflights and errors correctly
+const allowedOrigins = process.env.ALLOWED_ORIGINS 
+  ? process.env.ALLOWED_ORIGINS.split(",").map(origin => origin.trim().replace(/\/$/, ""))
+  : ["https://shopabhi.onrender.com", "http://localhost:3000", "http://localhost:5173"];
+
+app.use(
+  cors({
+    origin: (origin, callback) => {
+      if (!origin) return callback(null, true);
+      const normalizedOrigin = origin.replace(/\/$/, "");
+      if (allowedOrigins.includes(normalizedOrigin)) return callback(null, true);
+      
+      try {
+        const { hostname } = new URL(origin);
+        if (hostname === "localhost" || hostname === "127.0.0.1") return callback(null, true);
+      } catch (err) {}
+      
+      return callback(new Error(`CORS blocked origin: ${origin}`));
+    },
+    credentials: true,
+    methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With"],
+  })
+);
+
 // Traceability
 app.use(correlationIdMiddleware);
 
 // Security Middleware
 app.use(helmet());
 
-// Rate Limiting
+// Rate Limiting - Relaxed for development
 const generalLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  limit: 100,
+  limit: process.env.NODE_ENV === "development" ? 1000 : 100,
   standardHeaders: "draft-7",
   legacyHeaders: false,
   message: { error: "Too many requests, please try again later." },
@@ -39,7 +65,7 @@ const generalLimiter = rateLimit({
 
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  limit: 20,
+  limit: process.env.NODE_ENV === "development" ? 500 : 20,
   message: { error: "Too many login attempts, please try again after 15 minutes." },
 });
 
@@ -53,41 +79,9 @@ app.post("/api/orders/webhook", express.raw({ type: 'application/json' }), handl
 app.use(express.json());
 app.use(cookieParser());
 
-const allowedOrigins = process.env.ALLOWED_ORIGINS 
-  ? process.env.ALLOWED_ORIGINS.split(",").map(origin => origin.trim().replace(/\/$/, ""))
-  : ["https://shopabhi.onrender.com"];
-
-app.use(
-  cors({
-    origin: (origin, callback) => {
-      // Allow requests with no origin (like mobile apps or curl requests)
-      if (!origin) return callback(null, true);
-      
-      const normalizedOrigin = origin.replace(/\/$/, "");
-      
-      if (allowedOrigins.includes(normalizedOrigin)) {
-        return callback(null, true);
-      }
-
-      // Allow localhost/127.0.0.1 for development
-      try {
-        const { hostname } = new URL(origin);
-        if (hostname === "localhost" || hostname === "127.0.0.1") {
-          return callback(null, true);
-        }
-      } catch (err) {}
-
-      console.error(`CORS blocked origin: ${origin}`);
-      return callback(new Error(`CORS blocked origin: ${origin}`));
-    },
-    credentials: true,
-    methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With"],
-  })
-);
-
 // Routes
 app.use("/api/auth", authRoutes);
+app.use("/api/users", userRoutes);
 app.use("/api/orders", orderRoutes);
 app.use("/api/cart", cartRoutes);
 app.use("/api/products", productRoutes);

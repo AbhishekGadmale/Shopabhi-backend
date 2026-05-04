@@ -1,5 +1,6 @@
 import Product from "../models/Product.js";
 import Review from "../models/Review.js";
+import Category from "../models/Category.js";
 import AppError from "../utils/appError.js";
 import catchAsync from "../utils/catchAsync.js";
 
@@ -33,6 +34,14 @@ export const getAllProducts = catchAsync(async (req, res) => {
   });
 });
 
+export const getCategories = catchAsync(async (req, res) => {
+  const categories = await Category.find().sort({ name: 1 });
+  res.status(200).json({
+    status: "success",
+    categories,
+  });
+});
+
 export const getProduct = catchAsync(async (req, res, next) => {
   const product = await Product.findById(req.params.id);
   if (!product) {
@@ -60,12 +69,12 @@ export const getProductReviews = catchAsync(async (req, res, next) => {
   const limit = req.query.limit * 1 || 5;
   const skip = (page - 1) * limit;
 
-  const reviews = await Review.find({ product: req.params.id })
+  const reviews = await Review.find({ product: req.params.id, status: "approved" })
     .sort({ createdAt: -1 })
     .skip(skip)
     .limit(limit);
 
-  const total = await Review.countDocuments({ product: req.params.id });
+  const total = await Review.countDocuments({ product: req.params.id, status: "approved" });
 
   res.status(200).json({
     status: "success",

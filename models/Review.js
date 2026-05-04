@@ -26,6 +26,11 @@ const reviewSchema = new mongoose.Schema({
     type: String,
     required: true,
   },
+  status: {
+    type: String,
+    enum: ["pending", "approved", "rejected"],
+    default: "approved", // Default to approved to keep current flow simple unless moderation is strict
+  },
 }, { timestamps: true });
 
 // Prevent user from leaving multiple reviews for the same product
@@ -34,7 +39,7 @@ reviewSchema.index({ product: 1, user: 1 }, { unique: true });
 reviewSchema.statics.calcAverageRatings = async function (productId) {
   const stats = await this.aggregate([
     {
-      $match: { product: productId },
+      $match: { product: productId, status: "approved" },
     },
     {
       $group: {

@@ -3,6 +3,7 @@ import { authMiddleware } from "../middleware/authMiddleware.js";
 import { adminMiddleware } from "../middleware/adminMiddleware.js";
 import * as adminProductController from "../controllers/adminProductController.js";
 import * as adminOrderController from "../controllers/adminOrderController.js";
+import * as adminReviewController from "../controllers/adminReviewController.js";
 
 const router = express.Router();
 
@@ -16,6 +17,16 @@ router.get("/stats", adminOrderController.getDashboardStats);
 router.post("/products", adminProductController.createProduct);
 router.patch("/products/:id", adminProductController.updateProduct);
 router.delete("/products/:id", adminProductController.deleteProduct);
+
+// Categories
+router.get("/categories", adminProductController.getAllCategories);
+router.post("/categories", adminProductController.createCategory);
+router.delete("/categories/:id", adminProductController.deleteCategory);
+
+// Reviews
+router.get("/reviews", adminReviewController.getAllReviews);
+router.patch("/reviews/:id", adminReviewController.updateReviewStatus);
+router.delete("/reviews/:id", adminReviewController.deleteReview);
 
 // Orders
 router.get("/orders", adminOrderController.getAllOrders);
