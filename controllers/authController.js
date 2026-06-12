@@ -14,7 +14,7 @@ import {
 } from "../utils/validation.js";
 import AppError from "../utils/appError.js";
 import catchAsync from "../utils/catchAsync.js";
-import sendEmail from "../utils/email.js";
+import emailQueue from "../queues/emailQueue.js";
 
 export const signup = catchAsync(async (req, res, next) => {
   const validation = signupSchema.safeParse(req.body);
@@ -181,7 +181,7 @@ export const forgotPassword = catchAsync(async (req, res, next) => {
 
   try {
     if (process.env.EMAIL_HOST) {
-      await sendEmail({
+      await emailQueue.add("passwordReset", {
         email: user.email,
         subject: "Your password reset token (valid for 10 min)",
         message,
@@ -189,7 +189,7 @@ export const forgotPassword = catchAsync(async (req, res, next) => {
 
       res.status(200).json({
         status: "success",
-        message: "Token sent to email!",
+        message: "Reset instructions enqueued!",
       });
     } else {
        // Fallback for demo/dev without email config

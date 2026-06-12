@@ -9,7 +9,7 @@ import { orderSchema } from "../utils/validation.js";
 import AppError from "../utils/appError.js";
 import catchAsync from "../utils/catchAsync.js";
 import { config } from "../config/config.js";
-import sendEmail from "../utils/email.js";
+import emailQueue from "../queues/emailQueue.js";
 
 const razorpay = new Razorpay({
   key_id: config.RAZORPAY_KEY_ID,
@@ -399,18 +399,18 @@ export const verifyPayment = catchAsync(async (req, res, next) => {
 
     logEvent(req, "payment_verified_successfully", { orderId: order._id, razorpayPaymentId: razorpay_payment_id });
 
-    // Send Confirmation Email (Async - don't wait for it)
+    // Enqueue Confirmation Email
     try {
       const user = await User.findById(order.userId);
       if (user) {
-        sendEmail({
+        await emailQueue.add("orderConfirmation", {
           email: user.email,
           subject: `Order Confirmed - ${order._id}`,
           message: `Hi ${user.name},\n\nYour order #${order._id} for ₹${order.total} has been successfully placed and is now being processed.\n\nThank you for shopping with ShopAbhi!`
-        }).catch(err => console.error("Email sending failed:", err));
+        });
       }
     } catch (emailErr) {
-      console.error("Failed to trigger email notification:", emailErr);
+      console.error("Failed to enqueue email job:", emailErr);
     }
 
     res.status(200).json({

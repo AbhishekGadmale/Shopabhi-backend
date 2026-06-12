@@ -19,6 +19,7 @@ import globalErrorHandler from "./middleware/errorMiddleware.js";
 import AppError from "./utils/appError.js";
 import { startOrderExpiryJob } from "./jobs/orderExpiryJob.js";
 import { correlationIdMiddleware } from "./middleware/correlationIdMiddleware.js";
+import "./workers/emailWorker.js";
 
 const app = express();
 const PORT = process.env.PORT || 5000;

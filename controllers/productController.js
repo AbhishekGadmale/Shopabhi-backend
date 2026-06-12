@@ -4,6 +4,7 @@ import Review from "../models/Review.js";
 import Category from "../models/Category.js";
 import AppError from "../utils/appError.js";
 import catchAsync from "../utils/catchAsync.js";
+import redisClient, { clearCacheByPattern } from "../utils/redisClient.js";
 
 export const getAllProducts = catchAsync(async (req, res) => {
   // 1) Pagination
@@ -18,6 +19,18 @@ export const getAllProducts = catchAsync(async (req, res) => {
     queryObj.$text = { $search: req.query.search };
   }
 
+  // Redis Cache Key
+  const cacheKey = `products:all:${JSON.stringify(req.query)}`;
+
+  try {
+    const cachedData = await redisClient.get(cacheKey);
+    if (cachedData) {
+      return res.status(200).json(JSON.parse(cachedData));
+    }
+  } catch (err) {
+    console.error("Redis Get Error:", err);
+  }
+
   const products = await Product.find(queryObj)
     .sort({ createdAt: -1 })
     .skip(skip)
@@ -25,26 +38,71 @@ export const getAllProducts = catchAsync(async (req, res) => {
 
   const total = await Product.countDocuments(queryObj);
 
-  res.status(200).json({
+  const responseData = {
     status: "success",
     results: products.length,
     total,
     page,
     pages: Math.ceil(total / limit),
     products,
-  });
+  };
+
+  try {
+    // Cache for 1 hour (3600 seconds)
+    await redisClient.set(cacheKey, JSON.stringify(responseData), {
+      EX: 3600,
+    });
+  } catch (err) {
+    console.error("Redis Set Error:", err);
+  }
+
+  res.status(200).json(responseData);
 });
 
 export const getCategories = catchAsync(async (req, res) => {
+  const cacheKey = "products:categories";
+
+  try {
+    const cachedData = await redisClient.get(cacheKey);
+    if (cachedData) {
+      return res.status(200).json(JSON.parse(cachedData));
+    }
+  } catch (err) {
+    console.error("Redis Get Error:", err);
+  }
+
   const categories = await Category.find().sort({ name: 1 });
-  res.status(200).json({
+  
+  const responseData = {
     status: "success",
     categories,
-  });
+  };
+
+  try {
+    await redisClient.set(cacheKey, JSON.stringify(responseData), {
+      EX: 3600,
+    });
+  } catch (err) {
+    console.error("Redis Set Error:", err);
+  }
+
+  res.status(200).json(responseData);
 });
 
 export const getProduct = catchAsync(async (req, res, next) => {
-  const product = await Product.findById(req.params.id);
+  const productId = req.params.id;
+  const cacheKey = `product:${productId}`;
+
+  try {
+    const cachedData = await redisClient.get(cacheKey);
+    if (cachedData) {
+      return res.status(200).json(JSON.parse(cachedData));
+    }
+  } catch (err) {
+    console.error("Redis Get Error:", err);
+  }
+
+  const product = await Product.findById(productId);
   if (!product) {
     return next(new AppError("Product not found", 404));
   }
@@ -62,36 +120,68 @@ export const getProduct = catchAsync(async (req, res, next) => {
     distribution[item._id] = item.count;
   });
 
-  res.status(200).json({
+  const responseData = {
     status: "success",
     product: { 
       ...product.toObject(), 
       variants,
       ratingDistribution: distribution 
     },
-  });
+  };
+
+  try {
+    await redisClient.set(cacheKey, JSON.stringify(responseData), {
+      EX: 3600,
+    });
+  } catch (err) {
+    console.error("Redis Set Error:", err);
+  }
+
+  res.status(200).json(responseData);
 });
 
 export const getProductReviews = catchAsync(async (req, res, next) => {
+  const productId = req.params.id;
   const page = req.query.page * 1 || 1;
   const limit = req.query.limit * 1 || 5;
   const skip = (page - 1) * limit;
 
-  const reviews = await Review.find({ product: req.params.id, status: "approved" })
+  const cacheKey = `reviews:${productId}:${JSON.stringify(req.query)}`;
+
+  try {
+    const cachedData = await redisClient.get(cacheKey);
+    if (cachedData) {
+      return res.status(200).json(JSON.parse(cachedData));
+    }
+  } catch (err) {
+    console.error("Redis Get Error:", err);
+  }
+
+  const reviews = await Review.find({ product: productId, status: "approved" })
     .sort({ createdAt: -1 })
     .skip(skip)
     .limit(limit);
 
-  const total = await Review.countDocuments({ product: req.params.id, status: "approved" });
+  const total = await Review.countDocuments({ product: productId, status: "approved" });
 
-  res.status(200).json({
+  const responseData = {
     status: "success",
     results: reviews.length,
     total,
     page,
     pages: Math.ceil(total / limit),
     reviews,
-  });
+  };
+
+  try {
+    await redisClient.set(cacheKey, JSON.stringify(responseData), {
+      EX: 3600,
+    });
+  } catch (err) {
+    console.error("Redis Set Error:", err);
+  }
+
+  res.status(200).json(responseData);
 });
 
 export const createProductReview = catchAsync(async (req, res, next) => {
@@ -118,6 +208,9 @@ export const createProductReview = catchAsync(async (req, res, next) => {
     user: req.user.id,
     product: req.params.id,
   });
+
+  // Invalidate reviews cache for this product
+  await clearCacheByPattern(`reviews:${req.params.id}:*`);
 
   res.status(201).json({ status: "success", message: "Review added", review });
 });
